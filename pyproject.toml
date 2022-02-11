@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "xxx-service"
+version = "0.0.0"
+description = "Your description here"
+authors = ["Johannes Kotzerke <johannes.kotzerke@treefin.com>"]
+packages = [
+    { include = "xxx_service" }
+]
+
+[tool.poetry.dependencies]
+faker = "^9.3.1"
+fastapi = "^0.70.0"
+gitpython = "^3.1.24"
+gunicorn = "^20.1.0"
+pandas = "^1.3.2"
+psycopg2-binary = "^2.9.1"
+python = ">=3.9.7,<3.10.0"
+python-dotenv = "^0.19.1"
+requests = "^2.26.0"
+sqlalchemy = "^1.4.25"
+uvicorn = "^0.15.0"
+tensorflow = { version = "2.7.0", optional = true }
+
+[tool.poetry.dev-dependencies]
+bandit = "^1.6.2"
+black = "^21.9b0"
+dlint = "^0.11.0"
+flake8 = "^3.9.2" # dlint depends on flake8 < 4.0.0
+flake8-annotations = "^2.7.0"
+flake8-bugbear = "^21.9.2"
+flake8-comprehensions = "^3.7.0"
+hypothesis = "^6.23.3"
+mypy = "^0.910"
+pre-commit = "^2.15.0"
+pylint = "^2.11.1"
+pytest = "^6.2.5"
+pytest-check = "^1.0.4"
+pytest-cov = "^3.0.0"
+pytest-sugar = "^0.9.3"
+pytest-xdist = "^2.4.0"
+reorder_python_imports = "^2.3.1"
+
+[tool.poetry.extras]
+tensorflow = ["tensorflow"]
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"

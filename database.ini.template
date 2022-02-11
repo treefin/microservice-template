@@ -1,0 +1,11 @@
+[yyp]
+host=database-host.net
+database=dwh_name_prod
+user=<user>
+password=<password>
+
+[yyi]
+host=database-host.net
+database=dwh_name_integ
+user=<user>
+password=<password>

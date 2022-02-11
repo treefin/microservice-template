@@ -1,0 +1,195 @@
+image: python:3.9-buster
+
+variables:
+  YOUR_MODEL_REPOSITORY_BRANCH: master
+  YOUR_TRAINING_DATA_BRANCH: master
+  PYTHONUNBUFFERED: 1 #
+  STATUS: 0 # code quality and tests status
+
+stages:
+  - code quality and tests
+  - build
+  - model check
+  - model commit
+
+.common:
+  stage: code quality and tests
+  before_script:
+    # install dependencies
+    - pip install poetry
+    # Add your own repository if you'd like
+    - poetry install
+    - poetry install -E tensorflow -E scikit-learn -E imbalanced-learn
+    # clone your-model-repository
+    - apt-get update
+    - apt-get install -y git-lfs
+    # Add your gitlab model repository if required
+    - git lfs clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.yyy.com/your-model-repository --branch $YOUR_MODEL_REPOSITORY_BRANCH --single-branch --depth 1
+    - rm -rf your-model-repository/.git
+    # clone training data
+    - git lfs clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.yyy.com/your-training-data --branch $YOUR_TRAINING_DATA_BRANCH --single-branch --depth 1
+    - rm -rf your-training-data/.git
+    # add metadata for info endpoint
+    - git log -1 --format="%H" > xxx/api_version
+    - git log -1 --format=%cI >> xxx/api_version
+    - git rev-parse --abbrev-ref HEAD >> xxx/api_version
+    # activate venv
+    - source .venv/bin/activate
+  cache:
+    key: "this-cache-is-used-by-all-branches"
+    paths:
+      - ".venv"
+    policy: pull-push
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  needs: []
+
+code quality and tests:
+  extends: .common
+  script:
+    # tests
+    - your-model-repository="$(pwd)/your-model-repository" TRAINING_DATA="$(pwd)/your-training-data" pytest --junitxml=report.xml --durations=0 --cov=xxx -m "not fuzzytest and not unusedfeaturetest" || STATUS=1
+    # code quality
+    - bandit xxx -r || STATUS=2
+    - pylint xxx || STATUS=3
+    - flake8 xxx tests || STATUS=4
+    - mypy xxx || STATUS=5
+    - exit $STATUS
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+
+tests:
+  extends: .common
+  script:
+    - your-model-repository="$(pwd)/your-model-repository" TRAINING_DATA="$(pwd)/your-training-data" pytest --junitxml=report.xml --durations=0 --cov=xxx -m "tests"
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+  only:
+    - master
+    - tags
+    - dev
+    - /^hotfix.*$/
+
+build:
+  stage: build
+  image: docker:19.03.1
+  services:
+    - name: docker:19.03.1-dind
+      alias: docker
+  before_script:
+    # clone your-model-repository
+    - apk add git
+    - apk add git-lfs
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN registry.yyy.com
+    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.yyy.com/your-model-repository --branch $YOUR_MODEL_REPOSITORY_BRANCH --single-branch --depth 1
+    - rm -rf your-model-repository/.git
+    # add metadata for info endpoint
+    - git describe --tags > xxx/api_version
+    - git log -1 --format=%cI >> xxx/api_version
+    - git rev-parse --abbrev-ref HEAD >> xxx/api_version
+  script:
+    # build and push docker image, use git tag as image tag if available
+    # note: pull docker image first to re-use layers
+    - export DOCKER_IMAGE_TAG=$(if [ ! -z "$CI_COMMIT_TAG" ]; then echo "$CI_COMMIT_TAG"; else echo "$CI_COMMIT_REF_NAME"; fi)
+    - docker pull $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG || true
+    - DOCKER_BUILDKIT=1 docker build --cache-from $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG -t $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG -f Dockerfile .
+    - docker push $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG
+  artifacts:
+    paths:
+      - deploy-gitlab.sh
+  only:
+    - master
+    - tags
+    - dev
+    - /^hotfix.*$/
+  needs: []
+
+.model check:
+  stage: model check
+  image: tensorflow/tensorflow:2.7.0-gpu
+  before_script:
+    # common
+    - apt-get update
+    - apt-get install --only-upgrade ca-certificates # needs to be uptodate to support Let's Encrypt CA after Root Change
+    - apt-get install -y git-lfs
+    # clone training data
+    - git lfs clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.yyy.com/your-training-data --branch $YOUR_TRAINING_DATA_BRANCH --single-branch --depth 1
+    # clone your-model-repository, we load some metadata files + we later store trained model in this directory
+    - git lfs clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.yyy.com/your-model-repository --branch $YOUR_MODEL_REPOSITORY_BRANCH --single-branch --depth 1
+    # install os level dependencies required by project
+    - apt-get install -y curl # to be able to download files
+    - apt-get install -y build-essential # some python packages are compiled from source when binaries are not available from pypi
+    - apt-get install -y software-properties-common
+    - add-apt-repository -y ppa:deadsnakes/ppa
+    - apt-get install -y python3.9  # project depends on this python version
+    - apt-get install -y python3.9-venv # required by poetry
+    - apt-get install -y python3-pip # required by poetry
+    - apt-get install -y python3.9-dev # required by packages built from source
+    - python3 --version
+    - python --version
+    - pip install poetry
+    - poetry env use 3.9.9
+    - poetry run pip install --upgrade pip setuptools wheel # ensure latest pip, quite few packages depend on this
+    # install python dependencies required by project
+    - poetry install --no-root
+    - poetry install -E tensorflow -E scikit-learn -E imbalanced-learn --no-root
+    - poetry run pip install tensorflow-gpu==2.7.0
+    - poetry run pip install pytest
+  script:
+    # train a new tc model
+    - your-model-repository="$(pwd)/your-model-repository" TRAINING_DATA="$(pwd)/your-training-data" poetry run python3 run-tc-training.py
+    # run tests using newly trained model
+    - your-model-repository="$(pwd)/your-model-repository" TRAINING_DATA="$(pwd)/your-training-data" poetry run pytest --junitxml=report.xml --durations=0 --cov=xxx tests/test_turnover_classification.py::test_against_all_test_sets || STATUS=1
+    # train a new ic model
+    - your-model-repository="$(pwd)/your-model-repository" TRAINING_DATA="$(pwd)/your-training-data" poetry run python3 run-ic-training.py
+    # run tests using newly trained model
+    - your-model-repository="$(pwd)/your-model-repository" TRAINING_DATA="$(pwd)/your-training-data" poetry run pytest --junitxml=report.xml --durations=0 --cov=xxx tests/test_insurance_classification || STATUS=2
+    - exit $STATUS
+  tags:
+    - gpu
+  resource_group: gpu
+  cache:
+    key: "this-cache-is-used-by-all-branches-for-training-on-gpu"
+    paths:
+      - ".venv"
+  artifacts:
+    paths:
+      - your-model-repository/models/your-model
+      - your-model-repository/models/your-other-model
+    expire_in: 2 days
+  needs: []
+
+model check quality:
+  extends: .model check
+  after_script:
+    - exit $STATUS
+  when: manual
+
+model commit:
+  stage: model commit
+  image: tensorflow/tensorflow:2.3.1-gpu
+  before_script:
+    - apt-get update
+    - apt-get install --only-upgrade ca-certificates # needs to be uptodate to support Let's Encrypt CA after Root Change
+    - apt-get install -y git-lfs
+  script:
+    # copy over newly trained model to repo for committing
+    - git lfs clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.yyy.com/your-model-repository --branch $CI_COMMIT_BRANCH --single-branch --depth 1 your-model-repository_fresh_clone || git lfs clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.yyy.com/your-model-repository --branch $YOUR_MODEL_REPOSITORY_BRANCH --single-branch --depth 1 your-model-repository_fresh_clone
+    - cp -r your-model-repository/models/your-model/* your-model-repository_fresh_clone/models/your-model/
+    - cp -r your-model-repository/models/your-other-model/* your-model-repository_fresh_clone/models/your-other-model/
+    # save the model
+    - cd your-model-repository_fresh_clone
+    - git checkout $CI_COMMIT_BRANCH || git checkout -b $CI_COMMIT_BRANCH
+    - git add --all models/your-model/*
+    - git config --global user.email "$GITLAB_USER_EMAIL"
+    - git config --global user.name "$GITLAB_USER_NAME"
+    - git commit -m "model trained on $(date), from xxx branch $CI_COMMIT_BRANCH, from xxx commit $CI_COMMIT_SHORT_SHA"
+    - git push -u "https://gitlab-ci-token:${CDS_TO_YOUR_MODEL_REPOSITORY_TOKEN}@gitlab.yyy.com/your-model-repository" $CI_COMMIT_BRANCH:$CI_COMMIT_BRANCH
+    - cd ..
+  when: manual
+  variables:
+    GIT_STRATEGY: none # Do not checkout sources - use artifacts
+  needs: [code quality and tests, model check quality]

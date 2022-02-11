@@ -1,0 +1,49 @@
+# `pre-commit run -a` to run manually
+repos:
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: black
+        types: [file, python]
+        language: python
+        require_serial: true
+        args:
+          - xxx_service
+          - tests
+      - id: flake8
+        name: flake8
+        entry: flake8
+        language: python
+        types: [file, python]
+        pass_filenames: false
+        args:
+          - --config=setup.cfg
+          - xxx_service
+          - tests
+      - id: reorder-python-imports
+        name: reorder-python-imports
+        entry: reorder-python-imports
+        language: python
+        require_serial: true
+        types: [file, python]
+      - id: mypy
+        name: mypy
+        entry: mypy
+        language: python
+        types: [file, python]
+        pass_filenames: false
+        args:
+          # slower but better there passing just changed files,
+          # see https://github.com/pre-commit/mirrors-mypy/issues/5
+          - xxx_service
+      - id: pylint
+        name: pylint
+        entry: pylint
+        language: python
+        types: [file, python]
+        pass_filenames: false
+        args:
+          # slower then passing only changed files
+          # but that doesnt pick up .pylintrc file
+          - xxx_service
